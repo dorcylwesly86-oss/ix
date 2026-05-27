@@ -77,9 +77,9 @@
 <body>
   <div class="container">
     <h1>Página de Matemáticas</h1>
-    <p>Escribe una operación matemática y presiona <strong>Calcular</strong>. La página te mostrará el resultado y te dirá cómo se hace.</p>
-    <label for="expression">Operación:</label>
-    <input id="expression" type="text" placeholder="Ejemplo: 12 + 8" />
+    <p>Escribe una operación matemática o una ecuación lineal y presiona <strong>Calcular</strong>. La página te mostrará el resultado y te explicará cómo se hace.</p>
+    <label for="expression">Operación o ecuación:</label>
+    <input id="expression" type="text" placeholder="Ejemplo: 12 + 8 o 2x + 3 = 7" />
     <button id="calculate">Calcular</button>
 
     <div class="output" id="output" hidden>
@@ -98,9 +98,9 @@
     const stepsBox = document.getElementById('steps');
 
     function safeExpression(expr) {
-      const cleaned = expr.replace(/ /g, '');
-      if (!/^[0-9()+\-*/.]+$/.test(cleaned)) {
-        throw new Error('Solo se permiten números, espacios y los operadores + - * / ( ).');
+      const cleaned = expr.replace(/\s+/g, '');
+      if (!/^[0-9a-zA-Z()+\-*/=.,]+$/.test(cleaned)) {
+        throw new Error('Solo se permiten números, letras, espacios y los operadores + - * / = ( ).');
       }
       if (/\*\*|\/\/|\+\+|\-\-|\+\-|\-\+/.test(cleaned)) {
         return cleaned.replace(/\+\+/g, '+').replace(/\-\-/g, '+').replace(/\+\-/g, '-').replace(/\-\+/g, '-');
@@ -143,14 +143,100 @@
       }
     }
 
+    function parseLinearSide(side, variable) {
+      const normalized = side.replace(/\s+/g, '').replace(/\*/g, '');
+      const terms = normalized.match(/[+-]?[^+-]+/g) || [];
+      let coeff = 0;
+      let constant = 0;
+      for (const term of terms) {
+        if (!term) continue;
+        const termValue = term.replace(/,/g, '.');
+        const variableIndex = termValue.indexOf(variable);
+        if (variableIndex >= 0) {
+          let coefficient = termValue.slice(0, variableIndex);
+          if (coefficient === '' || coefficient === '+') coefficient = '1';
+          if (coefficient === '-') coefficient = '-1';
+          const parsed = Number(coefficient);
+          if (Number.isNaN(parsed)) {
+            throw new Error(`Término algebraico no válido: ${term}`);
+          }
+          coeff += parsed;
+        } else {
+          const parsed = Number(termValue);
+          if (Number.isNaN(parsed)) {
+            throw new Error(`Constante no válida: ${term}`);
+          }
+          constant += parsed;
+        }
+      }
+      return { coeff, constant };
+    }
+
+    function formatTerm(value, variable) {
+      if (value === 0) return '0';
+      const sign = value < 0 ? '-' : '';
+      const absValue = Math.abs(value);
+      const coeff = absValue === 1 ? '' : absValue;
+      return `${sign}${coeff}${variable}`;
+    }
+
+    function solveLinearEquation(expr) {
+      const cleaned = safeExpression(expr);
+      const sides = cleaned.split('=');
+      if (sides.length !== 2) {
+        throw new Error('Escribe una ecuación con un solo signo =, por ejemplo 2x + 3 = 7.');
+      }
+      const variableMatch = cleaned.match(/[a-zA-Z]/);
+      if (!variableMatch) {
+        throw new Error('Escribe una ecuación con una variable, por ejemplo 2x + 3 = 7.');
+      }
+      const variable = variableMatch[0];
+      const left = parseLinearSide(sides[0], variable);
+      const right = parseLinearSide(sides[1], variable);
+      const coeff = left.coeff - right.coeff;
+      const constant = right.constant - left.constant;
+
+      if (coeff === 0) {
+        if (constant === 0) {
+          return {
+            value: 'Infinitas soluciones',
+            steps: `Ecuación: ${sides[0]} = ${sides[1]}\nSe cancelan los términos con ${variable} y los constantes.\nResultado: la ecuación es verdadera para cualquier valor de ${variable}.`
+          };
+        }
+        return {
+          value: 'Sin solución',
+          steps: `Ecuación: ${sides[0]} = ${sides[1]}\nSe cancelan los términos con ${variable}, pero queda una igualdad imposible.\nResultado: no hay solución.`
+        };
+      }
+
+      const solution = constant / coeff;
+      const leftFormatted = `${formatTerm(left.coeff, variable)} ${left.constant >= 0 ? '+' : '-'} ${Math.abs(left.constant)}`.replace('+ -', '- ');
+      const rightFormatted = `${formatTerm(right.coeff, variable)} ${right.constant >= 0 ? '+' : '-'} ${Math.abs(right.constant)}`.replace('+ -', '- ');
+      const steps = [
+        `Ecuación: ${sides[0]} = ${sides[1]}`,
+        `Simplificamos lado izquierdo: ${leftFormatted}`,
+        `Simplificamos lado derecho: ${rightFormatted}`,
+        `Pasamos los términos con ${variable} al lado izquierdo y las constantes al lado derecho.`,
+        `Queda: ${formatTerm(coeff, variable)} = ${constant}`,
+        `Dividimos entre ${coeff}: ${variable} = ${solution}`
+      ];
+
+      return {
+        value: `${variable} = ${solution}`,
+        steps: steps.join('\n')
+      };
+    }
+
     function explainExpression(expr) {
       const cleaned = safeExpression(expr);
+      if (cleaned.includes('=')) {
+        return solveLinearEquation(expr);
+      }
       const simpleBinary = cleaned.match(/^([0-9.]+)([+\-*/])([0-9.]+)$/);
       if (simpleBinary) {
         return computeBinaryStep(simpleBinary[1], simpleBinary[2], simpleBinary[3]);
       }
 
-      const nested = [];
       let current = cleaned;
       const stepLines = [];
 
@@ -173,9 +259,7 @@
         throw new Error('El resultado no es un número válido.');
       }
 
-      if (stepLines.length === 0) {
-        stepLines.push(`Se evalúa la expresión: ${current}`);
-      }
+      stepLines.push(`Se evalúa la expresión: ${current}`);
       stepLines.push(`Resultado final: ${value}`);
       return {
         value,
